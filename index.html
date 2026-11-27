@@ -236,10 +236,10 @@
       border-top: 1px dashed rgba(255,255,255,0.16);
     }
     .section-label {
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       color: var(--muted);
       margin-bottom: 9px;
-      font-weight: 600;
+      font-weight: 700;
     }
     .quick-grid {
       display: grid;
@@ -363,6 +363,83 @@
     .member-name { font-weight: 700; font-size: 0.96rem; }
     .member-sub { font-size: 0.78rem; color: var(--muted); margin-top: 2px; }
 
+    /* Timeline hoạt động của cả nhà */
+    .filter-tabs {
+      display: flex;
+      gap: 6px;
+    }
+    .tab-btn {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.06);
+      color: var(--muted);
+      font-size: 0.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: 0.2s;
+    }
+    .tab-btn.active {
+      background: var(--gold);
+      border-color: var(--gold);
+      color: #0b0f22;
+    }
+    .timeline-box {
+      max-height: 320px;
+      overflow-y: auto;
+      padding-right: 4px;
+      margin-top: 6px;
+    }
+    .timeline-box::-webkit-scrollbar { width: 4px; }
+    .timeline-box::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.22);
+      border-radius: 4px;
+    }
+    .tl-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .tl-item:last-child { border-bottom: none; }
+    .tl-time {
+      min-width: 48px;
+      padding: 3px 6px;
+      border-radius: 8px;
+      background: rgba(255,255,255,0.1);
+      color: #fde68a;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-align: center;
+      margin-top: 1px;
+    }
+    .tl-content {
+      flex: 1;
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+    .tl-who {
+      font-weight: 700;
+      color: #fde68a;
+      margin-right: 4px;
+    }
+    .tl-date-tag {
+      font-size: 0.72rem;
+      color: var(--muted);
+      opacity: 0.75;
+      margin-left: 4px;
+    }
+    .tl-del {
+      background: none;
+      border: none;
+      color: rgba(255,255,255,0.35);
+      font-size: 0.82rem;
+      cursor: pointer;
+      padding: 2px 5px;
+    }
+    .tl-del:hover { color: #fda4af; }
+
     .floating-heart {
       position: fixed;
       bottom: 20px;
@@ -448,15 +525,29 @@
 
       <!-- Trạng thái các thành viên khác -->
       <div class="card">
-        <div class="section-label" style="margin-bottom:4px;">👨‍👩‍👧‍👦 Trạng thái các thành viên khác trong nhà</div>
+        <div class="section-label" style="margin-bottom:4px;">👨‍👩‍👧‍👦 Trạng thái hiện tại của cả nhà</div>
         <div id="others-list">Đang tải trạng thái gia đình...</div>
+      </div>
+
+      <!-- Dòng thời gian hoạt động của cả nhà -->
+      <div class="card">
+        <div class="top-line" style="margin-bottom:8px;">
+          <span class="user-title" style="font-size:1.02rem;">🕒 Dòng thời gian trong ngày</span>
+          <div class="filter-tabs">
+            <button class="tab-btn active" id="tab-today" onclick="switchTimelineFilter('today')">Hôm nay</button>
+            <button class="tab-btn" id="tab-all" onclick="switchTimelineFilter('all')">Tất cả</button>
+          </div>
+        </div>
+        <div class="timeline-box" id="family-timeline">
+          <p style="color:var(--muted); font-size:0.86rem;">Chưa có hoạt động nào được ghi lại hôm nay.</p>
+        </div>
       </div>
     </div>
   </div>
 
   <script type="module">
     import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+    import { getFirestore, doc, setDoc, deleteDoc, onSnapshot, collection, addDoc, query, orderBy, limit } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
     const firebaseConfig = {
       apiKey: "AIzaSyCZGLBnEoS4uOrUOqPTnESozMAETgrPOzk",
@@ -479,15 +570,18 @@
       { id: "quang", name: "Quang", emoji: "👨" }
     ];
 
-    // Tách biệt hoàn toàn key trình duyệt & collection Firestore với bản Chồng & Vợ
+    // Tách biệt hoàn toàn với bản Chồng & Vợ
     const STORAGE_KEY = "family_sleep_user";
     const USERS_COL = "family_users";
     const NUDGE_DOC = "latest";
     const NUDGE_COL = "family_nudge";
+    const MOOD_LOGS_COL = "family_mood_logs";
 
     let currentUser = localStorage.getItem(STORAGE_KEY) || "";
     let myState = { status: "awake", lastSleepTime: null, lastWakeTime: null, mood: "", moodAt: null };
     let allUsersData = {};
+    let timelineFilter = "today";
+    let cachedFamilyLogs = [];
 
     function spawnEffects(icons = ["🏡", "💛", "✨", "📞"], count = 8) {
       for (let i = 0; i < count; i++) {
@@ -507,6 +601,80 @@
       const d = new Date(isoStr);
       return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" }) +
              " (" + d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" }) + ")";
+    }
+
+    function formatHourOnly(isoStr) {
+      if (!isoStr) return "";
+      const d = new Date(isoStr);
+      return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });
+    }
+
+    function formatDayOnly(isoStr) {
+      if (!isoStr) return "";
+      const d = new Date(isoStr);
+      return d.toLocaleDateString("vi-VN", { day: "2-digit", month: "2-digit" });
+    }
+
+    function isToday(isoStr) {
+      if (!isoStr) return false;
+      const d = new Date(isoStr);
+      const now = new Date();
+      return d.getDate() === now.getDate() &&
+             d.getMonth() === now.getMonth() &&
+             d.getFullYear() === now.getFullYear();
+    }
+
+    async function logFamilyActivity(userId, text, isoTime) {
+      await addDoc(collection(db, MOOD_LOGS_COL), {
+        user: userId,
+        text: text,
+        at: isoTime,
+        createdAt: Date.now()
+      });
+    }
+
+    window.deleteFamilyLog = async (docId) => {
+      await deleteDoc(doc(db, MOOD_LOGS_COL, docId));
+    };
+
+    window.switchTimelineFilter = (mode) => {
+      timelineFilter = mode;
+      document.getElementById("tab-today").classList.toggle("active", mode === "today");
+      document.getElementById("tab-all").classList.toggle("active", mode === "all");
+      renderFamilyTimeline();
+    };
+
+    function renderFamilyTimeline() {
+      const box = document.getElementById("family-timeline");
+      const items = timelineFilter === "today"
+        ? cachedFamilyLogs.filter(item => isToday(item.at))
+        : cachedFamilyLogs;
+
+      if (!items.length) {
+        box.innerHTML = `<p style="color:var(--muted); font-size:0.86rem; padding:6px 0;">${
+          timelineFilter === "today"
+            ? "Hôm nay cả nhà chưa có cập nhật nào được lưu."
+            : "Chưa có lịch sử hoạt động của gia đình."
+        }</p>`;
+        return;
+      }
+
+      let html = "";
+      items.forEach(item => {
+        const mObj = MEMBERS.find(m => m.id === item.user);
+        const whoLabel = mObj ? `${mObj.emoji} ${mObj.name}` : item.user;
+        const dateTag = timelineFilter === "all" ? `<span class="tl-date-tag">${formatDayOnly(item.at)}</span>` : "";
+        html += `
+          <div class="tl-item">
+            <div class="tl-time">${formatHourOnly(item.at)}</div>
+            <div class="tl-content">
+              <span class="tl-who">${whoLabel}:</span>${item.text}${dateTag}
+            </div>
+            <button class="tl-del" title="Xóa dòng này" onclick="deleteFamilyLog('${item.id}')">✕</button>
+          </div>
+        `;
+      });
+      box.innerHTML = html;
     }
 
     window.selectRole = (roleId) => {
@@ -530,6 +698,8 @@
         moodAt: now
       }, { merge: true });
 
+      await logFamilyActivity(currentUser, moodText, now);
+
       await setDoc(doc(db, NUDGE_COL, NUDGE_DOC), {
         from: currentUser,
         text: `${meObj ? meObj.name : currentUser} cập nhật: ${moodText}`,
@@ -546,6 +716,8 @@
         mood: label,
         moodAt: now
       }, { merge: true });
+
+      await logFamilyActivity(currentUser, label, now);
 
       await setDoc(doc(db, NUDGE_COL, NUDGE_DOC), {
         from: currentUser,
@@ -566,20 +738,24 @@
       const now = new Date().toISOString();
       if (myState.status !== "sleeping") {
         spawnEffects(["🌙", "💤", "✨"], 8);
+        const sleepLabel = "💤 Đã đi ngủ";
         await setDoc(doc(db, USERS_COL, currentUser), {
           status: "sleeping",
           lastSleepTime: now,
-          mood: "💤 Đã đi ngủ",
+          mood: sleepLabel,
           moodAt: now
         }, { merge: true });
+        await logFamilyActivity(currentUser, sleepLabel, now);
       } else {
         spawnEffects(["☀️", "🏡", "✨"], 8);
+        const wakeLabel = "☀️ Đã thức dậy";
         await setDoc(doc(db, USERS_COL, currentUser), {
           status: "awake",
           lastWakeTime: now,
-          mood: "☀️ Đã thức dậy",
+          mood: wakeLabel,
           moodAt: now
         }, { merge: true });
+        await logFamilyActivity(currentUser, wakeLabel, now);
       }
     };
 
@@ -681,6 +857,15 @@
         const banner = document.getElementById("family-banner");
         banner.style.display = "block";
         banner.innerHTML = `${data.text} <span style="opacity:0.75;font-size:0.76rem;">(${formatTime(data.at)})</span>`;
+      });
+
+      const famLogQ = query(collection(db, MOOD_LOGS_COL), orderBy("createdAt", "desc"), limit(100));
+      onSnapshot(famLogQ, (snapshot) => {
+        cachedFamilyLogs = [];
+        snapshot.forEach((docSnap) => {
+          cachedFamilyLogs.push({ id: docSnap.id, ...docSnap.data() });
+        });
+        renderFamilyTimeline();
       });
     }
 
